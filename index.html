@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Toets Tekstverwerker</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
+    .toolbar {
+      max-width: 850px; margin: 0 auto 10px auto; background: #fff; padding: 10px;
+      border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    button {
+      padding: 6px 12px; border: 1px solid #ccc; background: #fafafa; border-radius: 4px;
+      cursor: pointer; font-size: 14px;
+    }
+    button:hover { background: #e9ecef; }
+    button.export { background: #0b57d0; color: #fff; border-color: #0b57d0; margin-left: auto; font-weight: bold; }
+    button.export:hover { background: #0842a0; }
+    #editor {
+      max-width: 850px; min-height: 600px; margin: 0 auto; background: #fff; padding: 40px;
+      border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); outline: none; font-size: 12pt; line-height: 1.5;
+    }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    td, th { border: 1px solid #333; padding: 6px 10px; min-width: 50px; }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button onclick="cmd('formatBlock', 'H2')"><b>Kop</b></button>
+  <button onclick="cmd('formatBlock', 'P')">Normaal</button>
+  <button onclick="cmd('bold')"><b>B</b></button>
+  <button onclick="cmd('italic')"><i>I</i></button>
+  <button onclick="cmd('underline')"><u>U</u></button>
+  <button onclick="cmd('insertUnorderedList')">• Lijst</button>
+  <button onclick="cmd('insertOrderedList')">1. Lijst</button>
+  <button onclick="insertTable()">+ Tabel</button>
+  <button onclick="addRow()">+ Rij</button>
+  <button onclick="addCol()">+ Kolom</button>
+  <button class="export" onclick="exportDoc()">Opslaan als Word (.doc)</button>
+</div>
+
+<div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
+  <p>Typ hier je antwoord...</p>
+</div>
+
+<script>
+  const editor = document.getElementById('editor');
+
+  function cmd(command, value = null) {
+    document.execCommand(command, false, value);
+    editor.focus();
+  }
+
+  function insertTable() {
+    const rows = parseInt(prompt("Aantal rijen:", "3"), 10);
+    const cols = parseInt(prompt("Aantal kolommen:", "3"), 10);
+    if (!rows || !cols || rows < 1 || cols < 1) return;
+    let html = '<table><tbody>';
+    for (let r = 0; r < rows; r++) {
+      html += '<tr>';
+      for (let c = 0; c < cols; c++) html += '<td><br></td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table><p><br></p>';
+    document.execCommand('insertHTML', false, html);
+  }
+
+  function getActiveTableCell() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return null;
+    let node = sel.anchorNode;
+    while (node && node !== editor) {
+      if (node.nodeName === 'TD' || node.nodeName === 'TH') return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function addRow() {
+    const cell = getActiveTableCell();
+    if (!cell) return alert("Klik eerst in een cel van de tabel.");
+    const row = cell.parentNode;
+    const newRow = row.cloneNode(true);
+    Array.from(newRow.cells).forEach(c => c.innerHTML = '<br>');
+    row.parentNode.insertBefore(newRow, row.nextSibling);
+  }
+
+  function addCol() {
+    const cell = getActiveTableCell();
+    if (!cell) return alert("Klik eerst in een cel van de tabel.");
+    const colIndex = cell.cellIndex;
+    const table = cell.closest('table');
+    Array.from(table.rows).forEach(row => {
+      const newCell = row.insertCell(colIndex + 1);
+      newCell.innerHTML = '<br>';
+    });
+  }
+
+  function exportDoc() {
+    const content = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head><meta charset='utf-8'><style>
+        body { font-family: Arial, sans-serif; font-size: 11pt; }
+        table { border-collapse: collapse; width: 100%; }
+        td, th { border: 1px solid #000; padding: 6px; }
+      </style></head>
+      <body>${editor.innerHTML}</body></html>`;
+    const blob = new Blob(['\ufeff', content], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'toetsuitwerking.doc';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+</script>
+
+</body>
+</html>
