@@ -2,6 +2,7 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
+  <link rel="icon" href="data:,">
   <title id="docTitle">Toets Tekstverwerker</title>
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
@@ -42,7 +43,7 @@
   <button id="btnTable" onclick="insertTable()">+ Tabel</button>
   <button id="btnRow" onclick="addRow()">+ Rij</button>
   <button id="btnCol" onclick="addCol()">+ Kolom</button>
-  <input type="file" id="fileInput" accept=".pdf" style="display:none" onchange="importPdf(event)">
+  <input type="file" id="fileInput" accept=".pdf" style="display:none">
   <button id="btnOpen" class="open" onclick="document.getElementById('fileInput').click()">Openen (.pdf)</button>
   <button id="btnExport" class="export" onclick="exportDocx()">Opslaan (.docx)</button>
   <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
@@ -51,218 +52,6 @@
 <div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
   <p>Typ hier je antwoord...</p>
 </div>
-
-<script type="module">
-  import * as pdfjsLib from './pdf.mjs';
-  pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.mjs';
-
-  // Hulpfunctie om PDF.js image-object om te zetten naar PNG DataURL
-  function pdfImageToDataUrl(imgObj) {
-    if (!imgObj || !imgObj.width || !imgObj.height) return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = imgObj.width;
-    canvas.height = imgObj.height;
-    const ctx = canvas.getContext('2d');
-
-    if (imgObj.bitmap) {
-      ctx.drawImage(imgObj.bitmap, 0, 0);
-      return canvas.toDataURL('image/png');
-    }
-
-    if (imgObj.data) {
-      const imgData = ctx.createImageData(imgObj.width, imgObj.height);
-      const src = imgObj.data;
-      const dst = imgData.data;
-      const pixels = imgObj.width * imgObj.height;
-
-      if (src.length === pixels * 4) {
-        dst.set(src);
-      } else if (src.length === pixels * 3) {
-        for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
-          dst[j] = src[i];
-          dst[j + 1] = src[i + 1];
-          dst[j + 2] = src[i + 2];
-          dst[j + 3] = 255;
-        }
-      } else if (src.length === pixels) {
-        for (let i = 0, j = 0; i < src.length; i++, j += 4) {
-          dst[j] = dst[j + 1] = dst[j + 2] = src[i];
-          dst[j + 3] = 255;
-        }
-      } else {
-        return null;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      return canvas.toDataURL('image/png');
-    }
-    return null;
-  }
-
-  // Matrix-vermenigvuldiging voor exacte Y-positie van afbeeldingen op de PDF-pagina
-  function multiplyMatrix(m1, m2) {
-    return [
-      m1[0] * m2[0] + m1[1] * m2[2],
-      m1[0] * m2[1] + m1[1] * m2[3],
-      m1[2] * m2[0] + m1[3] * m2[2],
-      m1[2] * m2[1] + m1[3] * m2[3],
-      m1[4] * m2[0] + m1[5] * m2[2] + m2[4],
-      m1[4] * m2[1] + m1[5] * m2[3] + m2[5]
-    ];
-  }
-
-  async function extractPageImages(page) {
-    const opList = await page.getOperatorList();
-    const OPS = pdfjsLib.OPS;
-    let ctm = [1, 0, 0, 1, 0, 0];
-    const ctmStack = [];
-    const foundImages = [];
-
-    for (let i = 0; i < opList.fnArray.length; i++) {
-      const fn = opList.fnArray[i];
-      const args = opList.argsArray[i];
-
-      if (fn === OPS.save) {
-        ctmStack.push([...ctm]);
-      } else if (fn === OPS.restore) {
-        if (ctmStack.length) ctm = ctmStack.pop();
-      } else if (fn === OPS.transform) {
-        ctm = multiplyMatrix(args, ctm);
-      } else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) {
-        try {
-          let imgObj = null;
-          if (fn === OPS.paintInlineImageXObject) {
-            imgObj = args[0];
-          } else {
-            const objId = args[0];
-            imgObj = await new Promise(resolve => {
-              if (page.objs.has(objId)) {
-                resolve(page.objs.get(objId));
-              } else {
-                page.objs.get(objId, obj => resolve(obj));
-              }
-            });
-          }
-
-          const dataUrl = pdfImageToDataUrl(imgObj);
-          if (dataUrl && imgObj.width > 15 && imgObj.height > 15) {
-            // Bovenkant van de afbeelding op de pagina bepalen voor juiste volgorde
-            const topY = Math.round(ctm[5] + Math.abs(ctm[3]));
-            const displayW = Math.min(Math.round(Math.abs(ctm[0])) || imgObj.width, 650);
-            foundImages.push({ y: topY, dataUrl, width: displayW });
-          }
-        } catch (e) {
-          console.warn('Afbeelding overgeslagen:', e);
-        }
-      }
-    }
-    return foundImages;
-  }
-
-  window.importPdf = async function(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let htmlParts = [];
-
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const pageImages = await extractPageImages(page);
-
-        // Groepeer tekstfragmenten per regel
-        const blocks = [];
-        for (const item of textContent.items) {
-          if (!item.str || !item.str.trim()) continue;
-          const y = Math.round(item.transform[5]);
-          const x = item.transform[4];
-          const fontSize = Math.round(Math.abs(item.transform[0]));
-
-          let line = blocks.find(b => b.type === 'line' && Math.abs(b.y - y) <= 4);
-          if (!line) {
-            line = { type: 'line', y, items: [], maxFont: fontSize };
-            blocks.push(line);
-          }
-          line.items.push({ x, str: item.str, width: item.width });
-          if (fontSize > line.maxFont) line.maxFont = fontSize;
-        }
-
-        // Voeg afbeeldingen toe aan dezelfde tijdlijn op basis van Y-coördinaat
-        for (const img of pageImages) {
-          blocks.push({ type: 'image', y: img.y, dataUrl: img.dataUrl, width: img.width });
-        }
-
-        // Sorteer tekstregels én afbeeldingen samen van boven naar beneden
-        blocks.sort((a, b) => b.y - a.y);
-
-        const lineBlocks = blocks.filter(b => b.type === 'line');
-        const sizes = lineBlocks.map(l => l.maxFont).sort((a, b) => a - b);
-        const medianFont = sizes[Math.floor(sizes.length / 2)] || 12;
-
-        let tableBuffer = [];
-        const flushTable = () => {
-          if (tableBuffer.length === 0) return;
-          if (tableBuffer.length >= 2) {
-            let tbl = '<table><tbody>';
-            for (const rowCells of tableBuffer) {
-              tbl += '<tr>' + rowCells.map(c => `<td>${escXml(c)}</td>`).join('') + '</tr>';
-            }
-            tbl += '</tbody></table>';
-            htmlParts.push(tbl);
-          } else {
-            htmlParts.push(`<p>${escXml(tableBuffer[0].join('   '))}</p>`);
-          }
-          tableBuffer = [];
-        };
-
-        for (const block of blocks) {
-          if (block.type === 'image') {
-            flushTable();
-            htmlParts.push(`<p><img src="${block.dataUrl}" style="width:${block.width}px"></p>`);
-            continue;
-          }
-
-          block.items.sort((a, b) => a.x - b.x);
-          const cells = [];
-          let currentCell = '';
-          let prevEnd = null;
-
-          for (const it of block.items) {
-            if (prevEnd !== null && (it.x - prevEnd) > 25) {
-              cells.push(currentCell.trim());
-              currentCell = it.str;
-            } else {
-              currentCell += (prevEnd !== null && (it.x - prevEnd) > 2 ? ' ' : '') + it.str;
-            }
-            prevEnd = it.x + (it.width || 0);
-          }
-          if (currentCell.trim()) cells.push(currentCell.trim());
-
-          if (cells.length >= 2 && block.maxFont <= medianFont + 1) {
-            tableBuffer.push(cells);
-          } else {
-            flushTable();
-            const fullText = escXml(cells.join(' '));
-            if (block.maxFont >= medianFont + 3) {
-              htmlParts.push(`<h2>${fullText}</h2>`);
-            } else {
-              htmlParts.push(`<p>${fullText}</p>`);
-            }
-          }
-        }
-        flushTable();
-      }
-
-      document.getElementById('editor').innerHTML = htmlParts.join('') || '<p><br></p>';
-    } catch (err) {
-      console.error(err);
-      alert(window.getErrorMsg());
-    } finally {
-      event.target.value = '';
-    }
-  };
-</script>
 
 <script>
   const editor = document.getElementById('editor');
@@ -309,7 +98,13 @@
     }
   };
 
-  window.getErrorMsg = () => i18n[currentLang].alertError;
+  function escXml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function getErrorMsg() {
+    return i18n[currentLang].alertError;
+  }
 
   function toggleLang() {
     const oldPlaceholder = i18n[currentLang].placeholder;
@@ -383,10 +178,6 @@
       const newCell = row.insertCell(colIndex + 1);
       newCell.innerHTML = '<br>';
     });
-  }
-
-  function escXml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function dataUrlToBytes(dataUrl) {
@@ -565,4 +356,285 @@
 
       const cdir = new Uint8Array(46 + nameBytes.length);
       const cdv = new DataView(cdir.buffer);
-      cdv.setUint32(0
+      cdv.setUint32(0, 0x02014b50, true);
+      cdv.setUint16(4, 20, true);
+      cdv.setUint16(6, 20, true);
+      cdv.setUint32(16, crc, true);
+      cdv.setUint32(20, data.length, true);
+      cdv.setUint32(24, data.length, true);
+      cdv.setUint16(28, nameBytes.length, true);
+      cdv.setUint32(42, offset, true);
+      cdir.set(nameBytes, 46);
+      central.push(cdir);
+      offset += header.length + data.length;
+    }
+    const cSize = central.reduce((s, a) => s + a.length, 0);
+    const eocd = new Uint8Array(22);
+    const edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(8, files.length, true);
+    edv.setUint16(10, files.length, true);
+    edv.setUint32(12, cSize, true);
+    edv.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, eocd], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    });
+  }
+
+  function exportDocx() {
+    const mediaList = [];
+    const docXml = htmlToDocumentXml(editor, mediaList);
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+        <Default Extension="xml" ContentType="application/xml"/>
+        <Default Extension="png" ContentType="image/png"/>
+        <Default Extension="jpg" ContentType="image/jpeg"/>
+        <Default Extension="gif" ContentType="image/gif"/>
+        <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+      </Types>`;
+
+    const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+      </Relationships>`;
+
+    const docRelsItems = mediaList.map(m =>
+      `<Relationship Id="${m.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${m.fileName}"/>`
+    ).join('');
+
+    const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        ${docRelsItems}
+      </Relationships>`;
+
+    const zipEntries = [
+      ['[Content_Types].xml', contentTypes],
+      ['_rels/.rels', rootRels],
+      ['word/_rels/document.xml.rels', docRels],
+      ['word/document.xml', docXml]
+    ];
+
+    for (const m of mediaList) {
+      zipEntries.push([`word/${m.fileName}`, m.bytes]);
+    }
+
+    const blob = makeZip(zipEntries);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = i18n[currentLang].fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+</script>
+
+<script type="module">
+  import * as pdfjsLib from './pdf.mjs';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.mjs';
+
+  function pdfImageToDataUrl(imgObj) {
+    if (!imgObj || !imgObj.width || !imgObj.height) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = imgObj.width;
+    canvas.height = imgObj.height;
+    const ctx = canvas.getContext('2d');
+
+    if (imgObj.bitmap) {
+      ctx.drawImage(imgObj.bitmap, 0, 0);
+      return canvas.toDataURL('image/png');
+    }
+
+    if (imgObj.data) {
+      const imgData = ctx.createImageData(imgObj.width, imgObj.height);
+      const src = imgObj.data;
+      const dst = imgData.data;
+      const pixels = imgObj.width * imgObj.height;
+
+      if (src.length === pixels * 4) {
+        dst.set(src);
+      } else if (src.length === pixels * 3) {
+        for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
+          dst[j] = src[i];
+          dst[j + 1] = src[i + 1];
+          dst[j + 2] = src[i + 2];
+          dst[j + 3] = 255;
+        }
+      } else if (src.length === pixels) {
+        for (let i = 0, j = 0; i < src.length; i++, j += 4) {
+          dst[j] = dst[j + 1] = dst[j + 2] = src[i];
+          dst[j + 3] = 255;
+        }
+      } else {
+        return null;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      return canvas.toDataURL('image/png');
+    }
+    return null;
+  }
+
+  function multiplyMatrix(m1, m2) {
+    return [
+      m1[0] * m2[0] + m1[1] * m2[2],
+      m1[0] * m2[1] + m1[1] * m2[3],
+      m1[2] * m2[0] + m1[3] * m2[2],
+      m1[2] * m2[1] + m1[3] * m2[3],
+      m1[4] * m2[0] + m1[5] * m2[2] + m2[4],
+      m1[4] * m2[1] + m1[5] * m2[3] + m2[5]
+    ];
+  }
+
+  async function extractPageImages(page) {
+    const opList = await page.getOperatorList();
+    const OPS = pdfjsLib.OPS;
+    let ctm = [1, 0, 0, 1, 0, 0];
+    const ctmStack = [];
+    const foundImages = [];
+
+    for (let i = 0; i < opList.fnArray.length; i++) {
+      const fn = opList.fnArray[i];
+      const args = opList.argsArray[i];
+
+      if (fn === OPS.save) {
+        ctmStack.push([...ctm]);
+      } else if (fn === OPS.restore) {
+        if (ctmStack.length) ctm = ctmStack.pop();
+      } else if (fn === OPS.transform) {
+        ctm = multiplyMatrix(args, ctm);
+      } else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) {
+        try {
+          let imgObj = null;
+          if (fn === OPS.paintInlineImageXObject) {
+            imgObj = args[0];
+          } else {
+            const objId = args[0];
+            imgObj = await new Promise(resolve => {
+              if (page.objs.has(objId)) {
+                resolve(page.objs.get(objId));
+              } else {
+                page.objs.get(objId, obj => resolve(obj));
+              }
+            });
+          }
+
+          const dataUrl = pdfImageToDataUrl(imgObj);
+          if (dataUrl && imgObj.width > 15 && imgObj.height > 15) {
+            const topY = Math.round(ctm[5] + Math.abs(ctm[3]));
+            const displayW = Math.min(Math.round(Math.abs(ctm[0])) || imgObj.width, 650);
+            foundImages.push({ y: topY, dataUrl, width: displayW });
+          }
+        } catch (e) {
+          console.warn('Afbeelding overgeslagen:', e);
+        }
+      }
+    }
+    return foundImages;
+  }
+
+  document.getElementById('fileInput').addEventListener('change', async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let htmlParts = [];
+
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const pageImages = await extractPageImages(page);
+
+        const blocks = [];
+        for (const item of textContent.items) {
+          if (!item.str || !item.str.trim()) continue;
+          const y = Math.round(item.transform[5]);
+          const x = item.transform[4];
+          const fontSize = Math.round(Math.abs(item.transform[0]));
+
+          let line = blocks.find(b => b.type === 'line' && Math.abs(b.y - y) <= 4);
+          if (!line) {
+            line = { type: 'line', y, items: [], maxFont: fontSize };
+            blocks.push(line);
+          }
+          line.items.push({ x, str: item.str, width: item.width });
+          if (fontSize > line.maxFont) line.maxFont = fontSize;
+        }
+
+        for (const img of pageImages) {
+          blocks.push({ type: 'image', y: img.y, dataUrl: img.dataUrl, width: img.width });
+        }
+
+        blocks.sort((a, b) => b.y - a.y);
+
+        const lineBlocks = blocks.filter(b => b.type === 'line');
+        const sizes = lineBlocks.map(l => l.maxFont).sort((a, b) => a - b);
+        const medianFont = sizes[Math.floor(sizes.length / 2)] || 12;
+
+        let tableBuffer = [];
+        const flushTable = () => {
+          if (tableBuffer.length === 0) return;
+          if (tableBuffer.length >= 2) {
+            let tbl = '<table><tbody>';
+            for (const rowCells of tableBuffer) {
+              tbl += '<tr>' + rowCells.map(c => `<td>${escXml(c)}</td>`).join('') + '</tr>';
+            }
+            tbl += '</tbody></table>';
+            htmlParts.push(tbl);
+          } else {
+            htmlParts.push(`<p>${escXml(tableBuffer[0].join('   '))}</p>`);
+          }
+          tableBuffer = [];
+        };
+
+        for (const block of blocks) {
+          if (block.type === 'image') {
+            flushTable();
+            htmlParts.push(`<p><img src="${block.dataUrl}" style="width:${block.width}px"></p>`);
+            continue;
+          }
+
+          block.items.sort((a, b) => a.x - b.x);
+          const cells = [];
+          let currentCell = '';
+          let prevEnd = null;
+
+          for (const it of block.items) {
+            if (prevEnd !== null && (it.x - prevEnd) > 25) {
+              cells.push(currentCell.trim());
+              currentCell = it.str;
+            } else {
+              currentCell += (prevEnd !== null && (it.x - prevEnd) > 2 ? ' ' : '') + it.str;
+            }
+            prevEnd = it.x + (it.width || 0);
+          }
+          if (currentCell.trim()) cells.push(currentCell.trim());
+
+          if (cells.length >= 2 && block.maxFont <= medianFont + 1) {
+            tableBuffer.push(cells);
+          } else {
+            flushTable();
+            const fullText = escXml(cells.join(' '));
+            if (block.maxFont >= medianFont + 3) {
+              htmlParts.push(`<h2>${fullText}</h2>`);
+            } else {
+              htmlParts.push(`<p>${fullText}</p>`);
+            }
+          }
+        }
+        flushTable();
+      }
+
+      editor.innerHTML = htmlParts.join('') || '<p><br></p>';
+    } catch (err) {
+      console.error(err);
+      alert(getErrorMsg() + '\n\n' + err.message);
+    } finally {
+      event.target.value = '';
+    }
+  });
+</script>
+
+</body>
+</html>
