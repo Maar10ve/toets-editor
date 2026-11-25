@@ -31,15 +31,15 @@
 <div class="toolbar">
   <button id="btnHeading" onclick="cmd('formatBlock', 'H2')"><b>Kop</b></button>
   <button id="btnNormal" onclick="cmd('formatBlock', 'P')">Normaal</button>
-  <button onclick="cmd('bold')"><b>B</b></button>
-  <button onclick="cmd('italic')"><i>I</i></button>
-  <button onclick="cmd('underline')"><u>U</u></button>
+  <button id="btnBold" onclick="cmd('bold')"><b>B</b></button>
+  <button id="btnItalic" onclick="cmd('italic')"><i>I</i></button>
+  <button id="btnUnderline" onclick="cmd('underline')"><u>U</u></button>
   <button id="btnBullet" onclick="cmd('insertUnorderedList')">• Lijst</button>
   <button id="btnNumber" onclick="cmd('insertOrderedList')">1. Lijst</button>
   <button id="btnTable" onclick="insertTable()">+ Tabel</button>
   <button id="btnRow" onclick="addRow()">+ Rij</button>
   <button id="btnCol" onclick="addCol()">+ Kolom</button>
-  <button id="btnExport" class="export" onclick="exportDoc()">Opslaan als Word (.doc)</button>
+  <button id="btnExport" class="export" onclick="exportDocx()">Opslaan als Word (.docx)</button>
   <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
 </div>
 
@@ -61,13 +61,13 @@
       table: '+ Tabel',
       row: '+ Rij',
       col: '+ Kolom',
-      exportBtn: 'Opslaan als Word (.doc)',
+      exportBtn: 'Opslaan als Word (.docx)',
       langBtn: 'EN',
       placeholder: 'Typ hier je antwoord...',
       promptRows: 'Aantal rijen:',
       promptCols: 'Aantal kolommen:',
       alertTable: 'Klik eerst in een cel van de tabel.',
-      fileName: 'toetsuitwerking.doc'
+      fileName: 'toetsuitwerking.docx'
     },
     en: {
       title: 'Exam Word Processor',
@@ -78,13 +78,13 @@
       table: '+ Table',
       row: '+ Row',
       col: '+ Column',
-      exportBtn: 'Save as Word (.doc)',
+      exportBtn: 'Save as Word (.docx)',
       langBtn: 'NL',
       placeholder: 'Type your answer here...',
       promptRows: 'Number of rows:',
       promptCols: 'Number of columns:',
       alertTable: 'Please click inside a table cell first.',
-      fileName: 'exam_answer.doc'
+      fileName: 'exam_answer.docx'
     }
   };
 
@@ -161,16 +161,165 @@
     });
   }
 
-  function exportDoc() {
-    const content = `
-      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-      <head><meta charset='utf-8'><style>
-        body { font-family: Arial, sans-serif; font-size: 11pt; }
-        table { border-collapse: collapse; width: 100%; }
-        td, th { border: 1px solid #000; padding: 6px; }
-      </style></head>
-      <body>${editor.innerHTML}</body></html>`;
-    const blob = new Blob(['\ufeff', content], { type: 'application/msword' });
+  // --- Zelfstandige HTML naar echte .DOCX (OpenXML + ZIP) generator ---
+  function escXml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function serializeRuns(node, style = {}) {
+    let xml = '';
+    node.childNodes.forEach(child => {
+      if (child.nodeType === 3) {
+        const text = child.nodeValue;
+        if (text) {
+          let rPr = '';
+          if (style.b) rPr += '<w:b/>';
+          if (style.i) rPr += '<w:i/>';
+          if (style.u) rPr += '<w:u w:val="single"/>';
+          if (style.h) rPr += '<w:b/><w:sz w:val="32"/>';
+          xml += `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${escXml(text)}</w:t></w:r>`;
+        }
+      } else if (child.nodeType === 1) {
+        const tag = child.tagName;
+        if (tag === 'BR') {
+          xml += '<w:r><w:br/></w:r>';
+        } else {
+          const nextStyle = { ...style };
+          if (tag === 'B' || tag === 'STRONG') nextStyle.b = true;
+          if (tag === 'I' || tag === 'EM') nextStyle.i = true;
+          if (tag === 'U') nextStyle.u = true;
+          xml += serializeRuns(child, nextStyle);
+        }
+      }
+    });
+    return xml;
+  }
+
+  function htmlToDocumentXml(root) {
+    let bodyXml = '';
+    function walk(container) {
+      container.childNodes.forEach(node => {
+        if (node.nodeType === 3) {
+          if (node.nodeValue.trim()) {
+            bodyXml += `<w:p>${serializeRuns(node.parentNode)}</w:p>`;
+          }
+          return;
+        }
+        if (node.nodeType !== 1) return;
+        const tag = node.tagName;
+        if (tag === 'H1' || tag === 'H2' || tag === 'H3') {
+          bodyXml += `<w:p><w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>${serializeRuns(node, { h: true })}</w:p>`;
+        } else if (tag === 'UL' || tag === 'OL') {
+          let idx = 1;
+          node.querySelectorAll(':scope > li').forEach(li => {
+            const prefix = tag === 'OL' ? `${idx++}. ` : '• ';
+            bodyXml += `<w:p><w:pPr><w:ind w:left="720"/></w:pPr><w:r><w:t xml:space="preserve">${prefix}</w:t></w:r>${serializeRuns(li)}</w:p>`;
+          });
+        } else if (tag === 'TABLE') {
+          bodyXml += `<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders>
+            <w:top w:val="single" w:sz="6" w:space="0" w:color="333333"/>
+            <w:left w:val="single" w:sz="6" w:space="0" w:color="333333"/>
+            <w:bottom w:val="single" w:sz="6" w:space="0" w:color="333333"/>
+            <w:right w:val="single" w:sz="6" w:space="0" w:color="333333"/>
+            <w:insideH w:val="single" w:sz="6" w:space="0" w:color="333333"/>
+            <w:insideV w:val="single" w:sz="6" w:space="0" w:color="333333"/>
+          </w:tblBorders></w:tblPr>`;
+          node.querySelectorAll('tr').forEach(tr => {
+            bodyXml += '<w:tr>';
+            tr.querySelectorAll('td, th').forEach(td => {
+              const runs = serializeRuns(td);
+              bodyXml += `<w:tc><w:p>${runs || ''}</w:p></w:tc>`;
+            });
+            bodyXml += '</w:tr>';
+          });
+          bodyXml += '</w:tbl><w:p/>';
+        } else if (tag === 'P' || tag === 'DIV') {
+          bodyXml += `<w:p>${serializeRuns(node)}</w:p>`;
+        } else {
+          walk(node);
+        }
+      });
+    }
+    walk(root);
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:body>${bodyXml || '<w:p/>'}<w:sectPr/></w:body>
+      </w:document>`;
+  }
+
+  function crc32(buf) {
+    let c = ~0;
+    for (let i = 0; i < buf.length; i++) {
+      c ^= buf[i];
+      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
+    }
+    return (~c) >>> 0;
+  }
+
+  function makeZip(files) {
+    const enc = new TextEncoder();
+    const parts = [], central = [];
+    let offset = 0;
+    for (const [name, content] of files) {
+      const nameBytes = enc.encode(name);
+      const data = enc.encode(content);
+      const crc = crc32(data);
+      const header = new Uint8Array(30 + nameBytes.length);
+      const dv = new DataView(header.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(8, 0, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, data.length, true);
+      dv.setUint32(22, data.length, true);
+      dv.setUint16(26, nameBytes.length, true);
+      header.set(nameBytes, 30);
+      parts.push(header, data);
+
+      const cdir = new Uint8Array(46 + nameBytes.length);
+      const cdv = new DataView(cdir.buffer);
+      cdv.setUint32(0, 0x02014b50, true);
+      cdv.setUint16(4, 20, true);
+      cdv.setUint16(6, 20, true);
+      cdv.setUint32(16, crc, true);
+      cdv.setUint32(20, data.length, true);
+      cdv.setUint32(24, data.length, true);
+      cdv.setUint16(28, nameBytes.length, true);
+      cdv.setUint32(42, offset, true);
+      cdir.set(nameBytes, 46);
+      central.push(cdir);
+      offset += header.length + data.length;
+    }
+    const cSize = central.reduce((s, a) => s + a.length, 0);
+    const eocd = new Uint8Array(22);
+    const edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(8, files.length, true);
+    edv.setUint16(10, files.length, true);
+    edv.setUint32(12, cSize, true);
+    edv.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, eocd], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    });
+  }
+
+  function exportDocx() {
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+        <Default Extension="xml" ContentType="application/xml"/>
+        <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+      </Types>`;
+    const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+      </Relationships>`;
+    const docXml = htmlToDocumentXml(editor);
+    const blob = makeZip([
+      ['[Content_Types].xml', contentTypes],
+      ['_rels/.rels', rels],
+      ['word/document.xml', docXml]
+    ]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
