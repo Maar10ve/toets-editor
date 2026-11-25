@@ -7,7 +7,7 @@
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
     .toolbar {
-      max-width: 980px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
+      max-width: 1050px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
       display: flex; flex-wrap: nowrap; gap: 5px; align-items: center; overflow-x: auto;
     }
@@ -16,11 +16,17 @@
       cursor: pointer; font-size: 13px; white-space: nowrap;
     }
     button:hover { background: #e9ecef; }
+    button.clear { background: #fff5f5; border-color: #f5c2c7; color: #b02a37; }
+    button.clear:hover { background: #ffe3e6; }
     button.open { background: #f1f3f4; border-color: #bbb; font-weight: bold; margin-left: auto; }
     button.export { background: #0b57d0; color: #fff; border-color: #0b57d0; font-weight: bold; }
     button.export:hover { background: #0842a0; }
     button.lang { background: #eef3fc; border-color: #b6d0fb; color: #0b57d0; font-weight: bold; }
     button.lang:hover { background: #dce8fc; }
+    .status-bar {
+      max-width: 980px; margin: 0 auto 6px auto; font-size: 12px; color: #5f6368;
+      text-align: right; padding-right: 4px;
+    }
     #editor {
       max-width: 900px; min-height: 600px; margin: 0 auto; background: #fff; padding: 40px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); outline: none; font-size: 12pt; line-height: 1.5;
@@ -43,11 +49,14 @@
   <button id="btnTable" onclick="insertTable()">+ Tabel</button>
   <button id="btnRow" onclick="addRow()">+ Rij</button>
   <button id="btnCol" onclick="addCol()">+ Kolom</button>
+  <button id="btnClear" class="clear" onclick="clearEditor()">Wissen</button>
   <input type="file" id="fileInput" accept=".pdf" style="display:none">
-  <button id="btnOpen" class="open" onclick="document.getElementById('fileInput').click()">Openen (.pdf)</button>
+  <button id="btnOpen" class="open" onclick="triggerOpenPdf()">Openen (.pdf)</button>
   <button id="btnExport" class="export" onclick="exportDocx()">Opslaan (.docx)</button>
   <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
 </div>
+
+<div id="statusBar" class="status-bar">Automatisch lokaal opgeslagen in deze sessie</div>
 
 <div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
   <p>Typ hier je antwoord...</p>
@@ -55,6 +64,8 @@
 
 <script>
   const editor = document.getElementById('editor');
+  const STORAGE_KEY_CONTENT = 'schoolyear_editor_content_v1';
+  const STORAGE_KEY_LANG = 'schoolyear_editor_lang_v1';
   let currentLang = 'nl';
 
   const i18n = {
@@ -67,13 +78,18 @@
       table: '+ Tabel',
       row: '+ Rij',
       col: '+ Kolom',
+      clearBtn: 'Wissen',
       openBtn: 'Openen (.pdf)',
       exportBtn: 'Opslaan (.docx)',
       langBtn: 'EN',
+      statusReady: 'Automatisch lokaal opgeslagen in deze sessie',
+      statusSaved: 'Laatst automatisch bewaard om ',
       placeholder: 'Typ hier je antwoord...',
       promptRows: 'Aantal rijen:',
       promptCols: 'Aantal kolommen:',
       alertTable: 'Klik eerst in een cel van de tabel.',
+      confirmClear: 'Weet je zeker dat je het hele document wilt wissen? Dit kan niet ongedaan worden gemaakt.',
+      confirmOverwrite: 'Er staat al tekst in het document. Wilt u deze vervangen door het gekozen PDF-bestand?',
       alertError: 'Kon dit PDF-bestand niet uitlezen. Controleer of het een tekst-PDF is (geen ingescande afbeelding).',
       fileName: 'toetsuitwerking.docx'
     },
@@ -86,29 +102,45 @@
       table: '+ Table',
       row: '+ Row',
       col: '+ Column',
+      clearBtn: 'Clear',
       openBtn: 'Open (.pdf)',
       exportBtn: 'Save (.docx)',
       langBtn: 'NL',
+      statusReady: 'Automatically saved locally in this session',
+      statusSaved: 'Last auto-saved at ',
       placeholder: 'Type your answer here...',
       promptRows: 'Number of rows:',
       promptCols: 'Number of columns:',
       alertTable: 'Please click inside a table cell first.',
+      confirmClear: 'Are you sure you want to clear the entire document? This cannot be undone.',
+      confirmOverwrite: 'The document already contains text. Do you want to replace it with the selected PDF file?',
       alertError: 'Could not read this PDF file. Please ensure it contains selectable text (not a scanned image).',
       fileName: 'exam_answer.docx'
     }
   };
 
-  function escXml(str) {
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function hasMeaningfulContent() {
+    const text = editor.textContent.trim();
+    const hasImg = editor.querySelector('img') !== null;
+    const hasTable = editor.querySelector('table') !== null;
+    if (hasImg || hasTable) return true;
+    return text !== '' && text !== i18n.nl.placeholder && text !== i18n.en.placeholder;
   }
 
-  function getErrorMsg() {
-    return i18n[currentLang].alertError;
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY_CONTENT, editor.innerHTML);
+      const now = new Date();
+      const timeStr = now.toTimeString().slice(0, 5);
+      document.getElementById('statusBar').textContent = i18n[currentLang].statusSaved + timeStr;
+    } catch (e) {
+      // Negeer als opslag vol zit (bijv. bij zeer grote afbeeldingen)
+    }
   }
 
-  function toggleLang() {
+  function applyLanguageUI(lang) {
     const oldPlaceholder = i18n[currentLang].placeholder;
-    currentLang = currentLang === 'nl' ? 'en' : 'nl';
+    currentLang = lang;
     const t = i18n[currentLang];
 
     document.documentElement.lang = currentLang;
@@ -120,18 +152,75 @@
     document.getElementById('btnTable').textContent = t.table;
     document.getElementById('btnRow').textContent = t.row;
     document.getElementById('btnCol').textContent = t.col;
+    document.getElementById('btnClear').textContent = t.clearBtn;
     document.getElementById('btnOpen').textContent = t.openBtn;
     document.getElementById('btnExport').textContent = t.exportBtn;
     document.getElementById('btnLang').textContent = t.langBtn;
+    document.getElementById('statusBar').textContent = t.statusReady;
 
-    if (editor.textContent.trim() === oldPlaceholder) {
+    const currentText = editor.textContent.trim();
+    if (currentText === '' || currentText === oldPlaceholder) {
       editor.innerHTML = `<p>${t.placeholder}</p>`;
     }
+  }
+
+  function toggleLang() {
+    const nextLang = currentLang === 'nl' ? 'en' : 'nl';
+    applyLanguageUI(nextLang);
+    try { localStorage.setItem(STORAGE_KEY_LANG, nextLang); } catch (e) {}
+  }
+
+  // Herstel opgeslagen inhoud en taal bij laden/verversen van de pagina
+  (function restoreState() {
+    try {
+      const savedLang = localStorage.getItem(STORAGE_KEY_LANG);
+      if (savedLang === 'en' || savedLang === 'nl') {
+        applyLanguageUI(savedLang);
+      }
+      const savedContent = localStorage.getItem(STORAGE_KEY_CONTENT);
+      if (savedContent && savedContent.trim() !== '') {
+        editor.innerHTML = savedContent;
+      }
+    } catch (e) {}
+  })();
+
+  editor.addEventListener('input', saveState);
+
+  // Waarschuw bij per ongeluk sluiten of verversen (F5) als er gewerkt is
+  window.addEventListener('beforeunload', (e) => {
+    if (hasMeaningfulContent()) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  function clearEditor() {
+    const t = i18n[currentLang];
+    if (hasMeaningfulContent() && !confirm(t.confirmClear)) return;
+    editor.innerHTML = `<p>${t.placeholder}</p>`;
+    try { localStorage.removeItem(STORAGE_KEY_CONTENT); } catch (e) {}
+    document.getElementById('statusBar').textContent = t.statusReady;
+    editor.focus();
+  }
+
+  function triggerOpenPdf() {
+    const t = i18n[currentLang];
+    if (hasMeaningfulContent() && !confirm(t.confirmOverwrite)) return;
+    document.getElementById('fileInput').click();
+  }
+
+  function escXml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function getErrorMsg() {
+    return i18n[currentLang].alertError;
   }
 
   function cmd(command, value = null) {
     document.execCommand(command, false, value);
     editor.focus();
+    saveState();
   }
 
   function insertTable() {
@@ -147,6 +236,7 @@
     }
     html += '</tbody></table><p><br></p>';
     document.execCommand('insertHTML', false, html);
+    saveState();
   }
 
   function getActiveTableCell() {
@@ -167,6 +257,7 @@
     const newRow = row.cloneNode(true);
     Array.from(newRow.cells).forEach(c => c.innerHTML = '<br>');
     row.parentNode.insertBefore(newRow, row.nextSibling);
+    saveState();
   }
 
   function addCol() {
@@ -178,6 +269,7 @@
       const newCell = row.insertCell(colIndex + 1);
       newCell.innerHTML = '<br>';
     });
+    saveState();
   }
 
   function dataUrlToBytes(dataUrl) {
@@ -382,6 +474,7 @@
   }
 
   function exportDocx() {
+    saveState();
     const mediaList = [];
     const docXml = htmlToDocumentXml(editor, mediaList);
 
@@ -627,6 +720,7 @@
       }
 
       editor.innerHTML = htmlParts.join('') || '<p><br></p>';
+      saveState();
     } catch (err) {
       console.error(err);
       alert(getErrorMsg() + '\n\n' + err.message);
