@@ -2,12 +2,12 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <title>Toets Tekstverwerker</title>
+  <title id="docTitle">Toets Tekstverwerker</title>
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
     .toolbar {
       max-width: 850px; margin: 0 auto 10px auto; background: #fff; padding: 10px;
-      border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 6px;
+      border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
     }
     button {
       padding: 6px 12px; border: 1px solid #ccc; background: #fafafa; border-radius: 4px;
@@ -16,6 +16,8 @@
     button:hover { background: #e9ecef; }
     button.export { background: #0b57d0; color: #fff; border-color: #0b57d0; margin-left: auto; font-weight: bold; }
     button.export:hover { background: #0842a0; }
+    button.lang { background: #eef3fc; border-color: #b6d0fb; color: #0b57d0; font-weight: bold; }
+    button.lang:hover { background: #dce8fc; }
     #editor {
       max-width: 850px; min-height: 600px; margin: 0 auto; background: #fff; padding: 40px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); outline: none; font-size: 12pt; line-height: 1.5;
@@ -27,17 +29,18 @@
 <body>
 
 <div class="toolbar">
-  <button onclick="cmd('formatBlock', 'H2')"><b>Kop</b></button>
-  <button onclick="cmd('formatBlock', 'P')">Normaal</button>
+  <button id="btnHeading" onclick="cmd('formatBlock', 'H2')"><b>Kop</b></button>
+  <button id="btnNormal" onclick="cmd('formatBlock', 'P')">Normaal</button>
   <button onclick="cmd('bold')"><b>B</b></button>
   <button onclick="cmd('italic')"><i>I</i></button>
   <button onclick="cmd('underline')"><u>U</u></button>
-  <button onclick="cmd('insertUnorderedList')">• Lijst</button>
-  <button onclick="cmd('insertOrderedList')">1. Lijst</button>
-  <button onclick="insertTable()">+ Tabel</button>
-  <button onclick="addRow()">+ Rij</button>
-  <button onclick="addCol()">+ Kolom</button>
-  <button class="export" onclick="exportDoc()">Opslaan als Word (.doc)</button>
+  <button id="btnBullet" onclick="cmd('insertUnorderedList')">• Lijst</button>
+  <button id="btnNumber" onclick="cmd('insertOrderedList')">1. Lijst</button>
+  <button id="btnTable" onclick="insertTable()">+ Tabel</button>
+  <button id="btnRow" onclick="addRow()">+ Rij</button>
+  <button id="btnCol" onclick="addCol()">+ Kolom</button>
+  <button id="btnExport" class="export" onclick="exportDoc()">Opslaan als Word (.doc)</button>
+  <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
 </div>
 
 <div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
@@ -46,6 +49,66 @@
 
 <script>
   const editor = document.getElementById('editor');
+  let currentLang = 'nl';
+
+  const i18n = {
+    nl: {
+      title: 'Toets Tekstverwerker',
+      heading: '<b>Kop</b>',
+      normal: 'Normaal',
+      bullet: '• Lijst',
+      number: '1. Lijst',
+      table: '+ Tabel',
+      row: '+ Rij',
+      col: '+ Kolom',
+      exportBtn: 'Opslaan als Word (.doc)',
+      langBtn: 'EN',
+      placeholder: 'Typ hier je antwoord...',
+      promptRows: 'Aantal rijen:',
+      promptCols: 'Aantal kolommen:',
+      alertTable: 'Klik eerst in een cel van de tabel.',
+      fileName: 'toetsuitwerking.doc'
+    },
+    en: {
+      title: 'Exam Word Processor',
+      heading: '<b>Heading</b>',
+      normal: 'Normal',
+      bullet: '• List',
+      number: '1. List',
+      table: '+ Table',
+      row: '+ Row',
+      col: '+ Column',
+      exportBtn: 'Save as Word (.doc)',
+      langBtn: 'NL',
+      placeholder: 'Type your answer here...',
+      promptRows: 'Number of rows:',
+      promptCols: 'Number of columns:',
+      alertTable: 'Please click inside a table cell first.',
+      fileName: 'exam_answer.doc'
+    }
+  };
+
+  function toggleLang() {
+    const oldPlaceholder = i18n[currentLang].placeholder;
+    currentLang = currentLang === 'nl' ? 'en' : 'nl';
+    const t = i18n[currentLang];
+
+    document.documentElement.lang = currentLang;
+    document.title = t.title;
+    document.getElementById('btnHeading').innerHTML = t.heading;
+    document.getElementById('btnNormal').textContent = t.normal;
+    document.getElementById('btnBullet').textContent = t.bullet;
+    document.getElementById('btnNumber').textContent = t.number;
+    document.getElementById('btnTable').textContent = t.table;
+    document.getElementById('btnRow').textContent = t.row;
+    document.getElementById('btnCol').textContent = t.col;
+    document.getElementById('btnExport').textContent = t.exportBtn;
+    document.getElementById('btnLang').textContent = t.langBtn;
+
+    if (editor.textContent.trim() === oldPlaceholder) {
+      editor.innerHTML = `<p>${t.placeholder}</p>`;
+    }
+  }
 
   function cmd(command, value = null) {
     document.execCommand(command, false, value);
@@ -53,8 +116,9 @@
   }
 
   function insertTable() {
-    const rows = parseInt(prompt("Aantal rijen:", "3"), 10);
-    const cols = parseInt(prompt("Aantal kolommen:", "3"), 10);
+    const t = i18n[currentLang];
+    const rows = parseInt(prompt(t.promptRows, "3"), 10);
+    const cols = parseInt(prompt(t.promptCols, "3"), 10);
     if (!rows || !cols || rows < 1 || cols < 1) return;
     let html = '<table><tbody>';
     for (let r = 0; r < rows; r++) {
@@ -79,7 +143,7 @@
 
   function addRow() {
     const cell = getActiveTableCell();
-    if (!cell) return alert("Klik eerst in een cel van de tabel.");
+    if (!cell) return alert(i18n[currentLang].alertTable);
     const row = cell.parentNode;
     const newRow = row.cloneNode(true);
     Array.from(newRow.cells).forEach(c => c.innerHTML = '<br>');
@@ -88,7 +152,7 @@
 
   function addCol() {
     const cell = getActiveTableCell();
-    if (!cell) return alert("Klik eerst in een cel van de tabel.");
+    if (!cell) return alert(i18n[currentLang].alertTable);
     const colIndex = cell.cellIndex;
     const table = cell.closest('table');
     Array.from(table.rows).forEach(row => {
@@ -110,7 +174,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'toetsuitwerking.doc';
+    a.download = i18n[currentLang].fileName;
     a.click();
     URL.revokeObjectURL(url);
   }
