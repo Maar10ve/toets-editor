@@ -6,20 +6,22 @@
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
     .toolbar {
-      max-width: 850px; margin: 0 auto 10px auto; background: #fff; padding: 10px;
-      border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      max-width: 980px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
+      border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      display: flex; flex-wrap: nowrap; gap: 5px; align-items: center; overflow-x: auto;
     }
     button {
-      padding: 6px 12px; border: 1px solid #ccc; background: #fafafa; border-radius: 4px;
-      cursor: pointer; font-size: 14px;
+      padding: 5px 9px; border: 1px solid #ccc; background: #fafafa; border-radius: 4px;
+      cursor: pointer; font-size: 13px; white-space: nowrap;
     }
     button:hover { background: #e9ecef; }
-    button.export { background: #0b57d0; color: #fff; border-color: #0b57d0; margin-left: auto; font-weight: bold; }
+    button.open { background: #f1f3f4; border-color: #bbb; font-weight: bold; margin-left: auto; }
+    button.export { background: #0b57d0; color: #fff; border-color: #0b57d0; font-weight: bold; }
     button.export:hover { background: #0842a0; }
     button.lang { background: #eef3fc; border-color: #b6d0fb; color: #0b57d0; font-weight: bold; }
     button.lang:hover { background: #dce8fc; }
     #editor {
-      max-width: 850px; min-height: 600px; margin: 0 auto; background: #fff; padding: 40px;
+      max-width: 900px; min-height: 600px; margin: 0 auto; background: #fff; padding: 40px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); outline: none; font-size: 12pt; line-height: 1.5;
     }
     table { border-collapse: collapse; width: 100%; margin: 12px 0; }
@@ -39,13 +41,115 @@
   <button id="btnTable" onclick="insertTable()">+ Tabel</button>
   <button id="btnRow" onclick="addRow()">+ Rij</button>
   <button id="btnCol" onclick="addCol()">+ Kolom</button>
-  <button id="btnExport" class="export" onclick="exportDocx()">Opslaan als Word (.docx)</button>
+  <input type="file" id="fileInput" accept=".pdf" style="display:none" onchange="importPdf(event)">
+  <button id="btnOpen" class="open" onclick="document.getElementById('fileInput').click()">Openen (.pdf)</button>
+  <button id="btnExport" class="export" onclick="exportDocx()">Opslaan (.docx)</button>
   <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
 </div>
 
 <div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
   <p>Typ hier je antwoord...</p>
 </div>
+
+<script type="module">
+  import * as pdfjsLib from './pdf.mjs';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.mjs';
+
+  window.importPdf = async function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let htmlParts = [];
+
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+
+        // Groepeer tekstfragmenten per regel (op basis van Y-positie)
+        const lines = [];
+        for (const item of textContent.items) {
+          if (!item.str || !item.str.trim()) continue;
+          const y = Math.round(item.transform[5]);
+          const x = item.transform[4];
+          const fontSize = Math.round(Math.abs(item.transform[0]));
+
+          let line = lines.find(l => Math.abs(l.y - y) <= 4);
+          if (!line) {
+            line = { y, items: [], maxFont: fontSize };
+            lines.push(line);
+          }
+          line.items.push({ x, str: item.str, width: item.width });
+          if (fontSize > line.maxFont) line.maxFont = fontSize;
+        }
+
+        // Sorteer regels van boven naar beneden en items van links naar rechts
+        lines.sort((a, b) => b.y - a.y);
+
+        // Bepaal standaard lettergrootte voor kop-herkenning
+        const sizes = lines.map(l => l.maxFont).sort((a, b) => a - b);
+        const medianFont = sizes[Math.floor(sizes.length / 2)] || 12;
+
+        // Detecteer opeenvolgende regels met meerdere kolommen om er een tabel van te maken
+        let tableBuffer = [];
+
+        const flushTable = () => {
+          if (tableBuffer.length === 0) return;
+          if (tableBuffer.length >= 2) {
+            let tbl = '<table><tbody>';
+            for (const rowCells of tableBuffer) {
+              tbl += '<tr>' + rowCells.map(c => `<td>${escXml(c)}</td>`).join('') + '</tr>';
+            }
+            tbl += '</tbody></table>';
+            htmlParts.push(tbl);
+          } else {
+            htmlParts.push(`<p>${escXml(tableBuffer[0].join('   '))}</p>`);
+          }
+          tableBuffer = [];
+        };
+
+        for (const line of lines) {
+          line.items.sort((a, b) => a.x - b.x);
+          const cells = [];
+          let currentCell = '';
+          let prevEnd = null;
+
+          for (const it of line.items) {
+            if (prevEnd !== null && (it.x - prevEnd) > 25) {
+              cells.push(currentCell.trim());
+              currentCell = it.str;
+            } else {
+              currentCell += (prevEnd !== null && (it.x - prevEnd) > 2 ? ' ' : '') + it.str;
+            }
+            prevEnd = it.x + (it.width || 0);
+          }
+          if (currentCell.trim()) cells.push(currentCell.trim());
+
+          if (cells.length >= 2 && line.maxFont <= medianFont + 1) {
+            tableBuffer.push(cells);
+          } else {
+            flushTable();
+            const fullText = escXml(cells.join(' '));
+            if (line.maxFont >= medianFont + 3) {
+              htmlParts.push(`<h2>${fullText}</h2>`);
+            } else {
+              htmlParts.push(`<p>${fullText}</p>`);
+            }
+          }
+        }
+        flushTable();
+      }
+
+      document.getElementById('editor').innerHTML = htmlParts.join('') || '<p><br></p>';
+    } catch (err) {
+      console.error(err);
+      alert(window.getErrorMsg());
+    } finally {
+      event.target.value = '';
+    }
+  };
+</script>
 
 <script>
   const editor = document.getElementById('editor');
@@ -61,12 +165,14 @@
       table: '+ Tabel',
       row: '+ Rij',
       col: '+ Kolom',
-      exportBtn: 'Opslaan als Word (.docx)',
+      openBtn: 'Openen (.pdf)',
+      exportBtn: 'Opslaan (.docx)',
       langBtn: 'EN',
       placeholder: 'Typ hier je antwoord...',
       promptRows: 'Aantal rijen:',
       promptCols: 'Aantal kolommen:',
       alertTable: 'Klik eerst in een cel van de tabel.',
+      alertError: 'Kon dit PDF-bestand niet uitlezen. Controleer of het een tekst-PDF is (geen ingescande afbeelding).',
       fileName: 'toetsuitwerking.docx'
     },
     en: {
@@ -78,15 +184,19 @@
       table: '+ Table',
       row: '+ Row',
       col: '+ Column',
-      exportBtn: 'Save as Word (.docx)',
+      openBtn: 'Open (.pdf)',
+      exportBtn: 'Save (.docx)',
       langBtn: 'NL',
       placeholder: 'Type your answer here...',
       promptRows: 'Number of rows:',
       promptCols: 'Number of columns:',
       alertTable: 'Please click inside a table cell first.',
+      alertError: 'Could not read this PDF file. Please ensure it contains selectable text (not a scanned image).',
       fileName: 'exam_answer.docx'
     }
   };
+
+  window.getErrorMsg = () => i18n[currentLang].alertError;
 
   function toggleLang() {
     const oldPlaceholder = i18n[currentLang].placeholder;
@@ -102,6 +212,7 @@
     document.getElementById('btnTable').textContent = t.table;
     document.getElementById('btnRow').textContent = t.row;
     document.getElementById('btnCol').textContent = t.col;
+    document.getElementById('btnOpen').textContent = t.openBtn;
     document.getElementById('btnExport').textContent = t.exportBtn;
     document.getElementById('btnLang').textContent = t.langBtn;
 
@@ -161,7 +272,6 @@
     });
   }
 
-  // --- Zelfstandige HTML naar echte .DOCX (OpenXML + ZIP) generator ---
   function escXml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
