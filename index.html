@@ -56,7 +56,7 @@
   <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
 </div>
 
-<div id="statusBar" class="status-bar">Automatisch lokaal opgeslagen in deze sessie</div>
+<div id="statusBar" class="status-bar">Let op: vergeet niet regelmatig op "Opslaan (.docx)" te klikken om je bestand te downloaden.</div>
 
 <div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
   <p>Open een nieuwe tab en ga naar <b>hvhl.remindotoets.nl</b> om je toets te starten.</p>
@@ -82,8 +82,10 @@
       openBtn: 'Openen (.pdf)',
       exportBtn: 'Opslaan (.docx)',
       langBtn: 'EN',
-      statusReady: 'Automatisch lokaal opgeslagen in deze sessie',
-      statusSaved: 'Laatst automatisch bewaard om ',
+      statusReady: 'Let op: vergeet niet regelmatig op "Opslaan (.docx)" te klikken om je bestand te downloaden.',
+      statusSaved: 'Concept lokaal bewaard (om ',
+      statusSavedEnd: ') — vergeet niet op "Opslaan (.docx)" te klikken om in te leveren.',
+      statusDownloaded: 'Bestand gedownload om ',
       placeholder: 'Open een nieuwe tab en ga naar <b>hvhl.remindotoets.nl</b> om je toets te starten.',
       promptRows: 'Aantal rijen:',
       promptCols: 'Aantal kolommen:',
@@ -106,8 +108,10 @@
       openBtn: 'Open (.pdf)',
       exportBtn: 'Save (.docx)',
       langBtn: 'NL',
-      statusReady: 'Automatically saved locally in this session',
-      statusSaved: 'Last auto-saved at ',
+      statusReady: 'Note: do not forget to click "Save (.docx)" regularly to download your file.',
+      statusSaved: 'Draft cached in browser (at ',
+      statusSavedEnd: ') — remember to click "Save (.docx)" to submit your work.',
+      statusDownloaded: 'File downloaded at ',
       placeholder: 'Open a new tab and go to <b>hvhl.remindotoets.nl</b> to start your exam.',
       promptRows: 'Number of rows:',
       promptCols: 'Number of columns:',
@@ -119,7 +123,7 @@
     }
   };
 
-function stripTags(html) {
+  function stripTags(html) {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     return tmp.textContent.trim();
@@ -136,9 +140,9 @@ function stripTags(html) {
   function saveState() {
     try {
       localStorage.setItem(STORAGE_KEY_CONTENT, editor.innerHTML);
-      const now = new Date();
-      const timeStr = now.toTimeString().slice(0, 5);
-      document.getElementById('statusBar').textContent = i18n[currentLang].statusSaved + timeStr;
+      const timeStr = new Date().toTimeString().slice(0, 5);
+      const t = i18n[currentLang];
+      document.getElementById('statusBar').textContent = t.statusSaved + timeStr + t.statusSavedEnd;
     } catch (e) {
       // Negeer als opslag vol zit (bijv. bij zeer grote afbeeldingen)
     }
@@ -526,6 +530,9 @@ function stripTags(html) {
     a.download = i18n[currentLang].fileName;
     a.click();
     URL.revokeObjectURL(url);
+
+    const timeStr = new Date().toTimeString().slice(0, 5);
+    document.getElementById('statusBar').textContent = `${i18n[currentLang].statusDownloaded}${timeStr} (${i18n[currentLang].fileName})`;
   }
 </script>
 
