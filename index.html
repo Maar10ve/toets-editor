@@ -59,7 +59,7 @@
 <div id="statusBar" class="status-bar">Automatisch lokaal opgeslagen in deze sessie</div>
 
 <div id="editor" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
-  <p>Typ hier je antwoord...</p>
+  <p>Open een nieuwe tab en ga naar <b>hvhl.remindotoets.nl</b> om je toets te starten.</p>
 </div>
 
 <script>
@@ -119,12 +119,18 @@
     }
   };
 
+function stripTags(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return tmp.textContent.trim();
+  }
+
   function hasMeaningfulContent() {
     const text = editor.textContent.trim();
     const hasImg = editor.querySelector('img') !== null;
     const hasTable = editor.querySelector('table') !== null;
     if (hasImg || hasTable) return true;
-    return text !== '' && text !== i18n.nl.placeholder && text !== i18n.en.placeholder;
+    return text !== '' && text !== stripTags(i18n.nl.placeholder) && text !== stripTags(i18n.en.placeholder);
   }
 
   function saveState() {
@@ -159,7 +165,7 @@
     document.getElementById('statusBar').textContent = t.statusReady;
 
     const currentText = editor.textContent.trim();
-    if (currentText === '' || currentText === oldPlaceholder) {
+    if (currentText === '' || currentText === stripTags(oldPlaceholder)) {
       editor.innerHTML = `<p>${t.placeholder}</p>`;
     }
   }
