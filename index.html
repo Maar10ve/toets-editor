@@ -532,7 +532,7 @@
     URL.revokeObjectURL(url);
 
     const timeStr = new Date().toTimeString().slice(0, 5);
-    document.getElementById('statusBar').textContent = `${i18n[currentLang].statusDownloaded}${timeStr} (${i18n[currentLang].fileName})`;
+    document.getElementById('statusBar').textContent = `${i18n[currentLang].statusDownloaded}${timeStr}`;
   }
 </script>
 
