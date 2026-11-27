@@ -7,7 +7,7 @@
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
     .toolbar {
-      max-width: 1050px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
+      max-width: 1080px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
       display: flex; flex-wrap: nowrap; gap: 5px; align-items: center; overflow-x: auto;
     }
@@ -50,8 +50,8 @@
   <button id="btnRow" onclick="addRow()">+ Rij</button>
   <button id="btnCol" onclick="addCol()">+ Kolom</button>
   <button id="btnClear" class="clear" onclick="clearEditor()">Wissen</button>
-  <input type="file" id="fileInput" accept=".pdf" style="display:none">
-  <button id="btnOpen" class="open" onclick="triggerOpenPdf()">Openen (.pdf)</button>
+  <input type="file" id="fileInput" accept=".pdf,.docx" style="display:none">
+  <button id="btnOpen" class="open" onclick="triggerOpenFile()">Openen</button>
   <button id="btnExport" class="export" onclick="exportDocx()">Opslaan (.docx)</button>
   <button id="btnLang" class="lang" onclick="toggleLang()">EN</button>
 </div>
@@ -79,7 +79,7 @@
       row: '+ Rij',
       col: '+ Kolom',
       clearBtn: 'Wissen',
-      openBtn: 'Openen (.pdf)',
+      openBtn: 'Openen',
       exportBtn: 'Opslaan (.docx)',
       langBtn: 'EN',
       statusReady: 'Let op: vergeet niet regelmatig op "Opslaan (.docx)" te klikken om je bestand op te slaan.',
@@ -91,8 +91,8 @@
       promptCols: 'Aantal kolommen:',
       alertTable: 'Klik eerst in een cel van de tabel.',
       confirmClear: 'Weet je zeker dat je het hele document wilt wissen? Dit kan niet ongedaan worden gemaakt.',
-      confirmOverwrite: 'Er staat al tekst in het document. Wilt u deze vervangen door het gekozen PDF-bestand?',
-      alertError: 'Kon dit PDF-bestand niet uitlezen. Controleer of het een tekst-PDF is (geen ingescande afbeelding).',
+      confirmOverwrite: 'Er staat al tekst in het document. Wilt u deze vervangen door het gekozen bestand?',
+      alertError: 'Kon dit bestand niet openen. Controleer of het een geldig .pdf- of .docx-bestand is.',
       fileName: 'toetsuitwerking.docx'
     },
     en: {
@@ -105,7 +105,7 @@
       row: '+ Row',
       col: '+ Column',
       clearBtn: 'Clear',
-      openBtn: 'Open (.pdf)',
+      openBtn: 'Open',
       exportBtn: 'Save (.docx)',
       langBtn: 'NL',
       statusReady: 'Note: do not forget to click "Save (.docx)" regularly to save your file.',
@@ -117,8 +117,8 @@
       promptCols: 'Number of columns:',
       alertTable: 'Please click inside a table cell first.',
       confirmClear: 'Are you sure you want to clear the entire document? This cannot be undone.',
-      confirmOverwrite: 'The document already contains text. Do you want to replace it with the selected PDF file?',
-      alertError: 'Could not read this PDF file. Please ensure it contains selectable text (not a scanned image).',
+      confirmOverwrite: 'The document already contains text. Do you want to replace it with the selected file?',
+      alertError: 'Could not open this file. Please ensure it is a valid .pdf or .docx file.',
       fileName: 'exam_answer.docx'
     }
   };
@@ -143,9 +143,7 @@
       const timeStr = new Date().toTimeString().slice(0, 5);
       const t = i18n[currentLang];
       document.getElementById('statusBar').textContent = t.statusSaved + timeStr + t.statusSavedEnd;
-    } catch (e) {
-      // Negeer als opslag vol zit (bijv. bij zeer grote afbeeldingen)
-    }
+    } catch (e) {}
   }
 
   function applyLanguageUI(lang) {
@@ -180,7 +178,6 @@
     try { localStorage.setItem(STORAGE_KEY_LANG, nextLang); } catch (e) {}
   }
 
-  // Herstel opgeslagen inhoud en taal bij laden/verversen van de pagina
   (function restoreState() {
     try {
       const savedLang = localStorage.getItem(STORAGE_KEY_LANG);
@@ -196,7 +193,6 @@
 
   editor.addEventListener('input', saveState);
 
-  // Waarschuw bij per ongeluk sluiten of verversen (F5) als er gewerkt is
   window.addEventListener('beforeunload', (e) => {
     if (hasMeaningfulContent()) {
       e.preventDefault();
@@ -213,7 +209,7 @@
     editor.focus();
   }
 
-  function triggerOpenPdf() {
+  function triggerOpenFile() {
     const t = i18n[currentLang];
     if (hasMeaningfulContent() && !confirm(t.confirmOverwrite)) return;
     document.getElementById('fileInput').click();
@@ -282,6 +278,173 @@
     saveState();
   }
 
+  // --- Bestaand .DOCX bestand uitpakken en inlezen (inclusief afbeeldingen) ---
+  async function extractAllZipEntries(arrayBuffer) {
+    const dv = new DataView(arrayBuffer);
+    const bytes = new Uint8Array(arrayBuffer);
+    const dec = new TextDecoder();
+
+    let eocdOffset = -1;
+    for (let i = bytes.length - 22; i >= 0; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocdOffset = i; break; }
+    }
+    if (eocdOffset === -1) throw new Error('Geen geldig ZIP/DOCX-bestand');
+
+    const totalEntries = dv.getUint16(eocdOffset + 10, true);
+    let cdOffset = dv.getUint32(eocdOffset + 16, true);
+    const entries = {};
+
+    for (let i = 0; i < totalEntries; i++) {
+      if (dv.getUint32(cdOffset, true) !== 0x02014b50) break;
+      const compression = dv.getUint16(cdOffset + 10, true);
+      const compSize = dv.getUint32(cdOffset + 20, true);
+      const nameLen = dv.getUint16(cdOffset + 28, true);
+      const extraLen = dv.getUint16(cdOffset + 30, true);
+      const commentLen = dv.getUint16(cdOffset + 32, true);
+      const localHeaderOffset = dv.getUint32(cdOffset + 42, true);
+      const fileName = dec.decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
+
+      const lNameLen = dv.getUint16(localHeaderOffset + 26, true);
+      const lExtraLen = dv.getUint16(localHeaderOffset + 28, true);
+      const dataStart = localHeaderOffset + 30 + lNameLen + lExtraLen;
+      const compData = bytes.subarray(dataStart, dataStart + compSize);
+
+      if (compression === 0) {
+        entries[fileName] = compData;
+      } else if (compression === 8) {
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        writer.write(compData);
+        writer.close();
+        const outBuf = await new Response(ds.readable).arrayBuffer();
+        entries[fileName] = new Uint8Array(outBuf);
+      }
+      cdOffset += 46 + nameLen + extraLen + commentLen;
+    }
+    return entries;
+  }
+
+  function bytesToBase64(bytes) {
+    let bin = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+
+  function parseDocxRuns(pNode, mediaMap) {
+    let html = '';
+    Array.from(pNode.childNodes).forEach(child => {
+      if (child.localName === 'r') {
+        const rPr = Array.from(child.childNodes).find(n => n.localName === 'rPr');
+        let isB = false, isI = false, isU = false;
+        if (rPr) {
+          Array.from(rPr.childNodes).forEach(prop => {
+            if (prop.localName === 'b' && prop.getAttribute('w:val') !== '0' && prop.getAttribute('w:val') !== 'false') isB = true;
+            if (prop.localName === 'i' && prop.getAttribute('w:val') !== '0' && prop.getAttribute('w:val') !== 'false') isI = true;
+            if (prop.localName === 'u' && prop.getAttribute('w:val') !== 'none') isU = true;
+          });
+        }
+        let runHtml = '';
+        Array.from(child.childNodes).forEach(sub => {
+          if (sub.localName === 't') {
+            runHtml += escXml(sub.textContent);
+          } else if (sub.localName === 'br') {
+            runHtml += '<br>';
+          } else if (sub.localName === 'tab') {
+            runHtml += '&emsp;';
+          } else if (sub.localName === 'drawing') {
+            const blip = sub.getElementsByTagNameNS('*', 'blip')[0];
+            if (blip) {
+              const rId = blip.getAttribute('r:embed') || blip.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
+              if (rId && mediaMap[rId]) {
+                runHtml += `<img src="${mediaMap[rId]}">`;
+              }
+            }
+          }
+        });
+        if (runHtml) {
+          if (!runHtml.startsWith('<img')) {
+            if (isU) runHtml = `<u>${runHtml}</u>`;
+            if (isI) runHtml = `<i>${runHtml}</i>`;
+            if (isB) runHtml = `<b>${runHtml}</b>`;
+          }
+          html += runHtml;
+        }
+      } else if (child.localName === 'hyperlink') {
+        html += parseDocxRuns(child, mediaMap);
+      }
+    });
+    return html;
+  }
+
+  function docxEntriesToHtml(entries) {
+    const dec = new TextDecoder();
+    if (!entries['word/document.xml']) throw new Error('word/document.xml ontbreekt');
+    const docXmlStr = dec.decode(entries['word/document.xml']);
+
+    // Koppel rId's aan ingesloten afbeeldingen
+    const mediaMap = {};
+    if (entries['word/_rels/document.xml.rels']) {
+      const relsStr = dec.decode(entries['word/_rels/document.xml.rels']);
+      const relsDoc = new DOMParser().parseFromString(relsStr, 'application/xml');
+      Array.from(relsDoc.getElementsByTagName('Relationship')).forEach(rel => {
+        const id = rel.getAttribute('Id');
+        const target = rel.getAttribute('Target') || '';
+        const cleanPath = target.startsWith('/') ? target.slice(1) : `word/${target.replace(/^\/+/, '')}`;
+        if (entries[cleanPath]) {
+          const ext = cleanPath.split('.').pop().toLowerCase();
+          const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : (ext === 'gif' ? 'image/gif' : 'image/png');
+          mediaMap[id] = `data:${mime};base64,${bytesToBase64(entries[cleanPath])}`;
+        }
+      });
+    }
+
+    const xmlDoc = new DOMParser().parseFromString(docXmlStr, 'application/xml');
+    const body = xmlDoc.getElementsByTagNameNS('*', 'body')[0];
+    if (!body) return '<p><br></p>';
+
+    let resultHtml = '';
+    Array.from(body.childNodes).forEach(node => {
+      if (node.localName === 'p') {
+        const pPr = Array.from(node.childNodes).find(n => n.localName === 'pPr');
+        let isHeading = false;
+        if (pPr) {
+          const pStyle = Array.from(pPr.childNodes).find(n => n.localName === 'pStyle');
+          const val = pStyle ? (pStyle.getAttribute('w:val') || pStyle.getAttribute('val') || '') : '';
+          if (/^(Heading|Kop|Title|Titel)/i.test(val)) isHeading = true;
+        }
+        const inner = parseDocxRuns(node, mediaMap) || '<br>';
+        resultHtml += isHeading ? `<h2>${inner}</h2>` : `<p>${inner}</p>`;
+      } else if (node.localName === 'tbl') {
+        resultHtml += '<table><tbody>';
+        Array.from(node.childNodes).forEach(tr => {
+          if (tr.localName === 'tr') {
+            resultHtml += '<tr>';
+            Array.from(tr.childNodes).forEach(tc => {
+              if (tc.localName === 'tc') {
+                const cellPs = Array.from(tc.childNodes).filter(n => n.localName === 'p');
+                const cellHtml = cellPs.map(p => parseDocxRuns(p, mediaMap)).filter(Boolean).join('<br>') || '<br>';
+                resultHtml += `<td>${cellHtml}</td>`;
+              }
+            });
+            resultHtml += '</tr>';
+          }
+        });
+        resultHtml += '</tbody></table>';
+      }
+    });
+    return resultHtml || '<p><br></p>';
+  }
+
+  window.importDocxBuffer = async function(arrayBuffer) {
+    const entries = await extractAllZipEntries(arrayBuffer);
+    editor.innerHTML = docxEntriesToHtml(entries);
+    saveState();
+  };
+
+  // --- HTML naar echte .DOCX (OpenXML + ZIP) generator ---
   function dataUrlToBytes(dataUrl) {
     const match = dataUrl.match(/^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/i);
     if (!match) return null;
@@ -644,6 +807,15 @@
     if (!file) return;
     try {
       const arrayBuffer = await file.arrayBuffer();
+      const lowerName = file.name.toLowerCase();
+
+      // Route 1: Bestaand .docx bestand openen
+      if (lowerName.endsWith('.docx')) {
+        await window.importDocxBuffer(arrayBuffer);
+        return;
+      }
+
+      // Route 2: .pdf bestand openen
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let htmlParts = [];
 
