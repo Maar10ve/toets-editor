@@ -7,7 +7,7 @@
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
     .toolbar {
-      max-width: 1080px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
+      max-width: 1140px; margin: 0 auto 10px auto; background: #fff; padding: 8px 12px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
       display: flex; flex-wrap: nowrap; gap: 5px; align-items: center; overflow-x: auto;
     }
@@ -65,7 +65,9 @@
   <button id="btnNumber" onclick="cmd('insertOrderedList')">1. Lijst</button>
   <button id="btnTable" onclick="insertTable()">+ Tabel</button>
   <button id="btnRow" onclick="addRow()">+ Rij</button>
+  <button id="btnDelRow" onclick="deleteRow()">- Rij</button>
   <button id="btnCol" onclick="addCol()">+ Kolom</button>
+  <button id="btnDelCol" onclick="deleteCol()">- Kolom</button>
   <button id="btnClear" class="clear" onclick="clearEditor()">Wissen</button>
   <input type="file" id="fileInput" accept=".pdf,.docx" style="display:none">
   <button id="btnOpen" class="open" onclick="triggerOpenFile()">Openen</button>
@@ -94,7 +96,9 @@
       number: '1. Lijst',
       table: '+ Tabel',
       row: '+ Rij',
+      delRow: '- Rij',
       col: '+ Kolom',
+      delCol: '- Kolom',
       clearBtn: 'Wissen',
       openBtn: 'Openen',
       exportBtn: 'Opslaan (.docx)',
@@ -120,7 +124,9 @@
       number: '1. List',
       table: '+ Table',
       row: '+ Row',
+      delRow: '- Row',
       col: '+ Column',
+      delCol: '- Column',
       clearBtn: 'Clear',
       openBtn: 'Open',
       exportBtn: 'Save (.docx)',
@@ -176,7 +182,9 @@
     document.getElementById('btnNumber').textContent = t.number;
     document.getElementById('btnTable').textContent = t.table;
     document.getElementById('btnRow').textContent = t.row;
+    document.getElementById('btnDelRow').textContent = t.delRow;
     document.getElementById('btnCol').textContent = t.col;
+    document.getElementById('btnDelCol').textContent = t.delCol;
     document.getElementById('btnClear').textContent = t.clearBtn;
     document.getElementById('btnOpen').textContent = t.openBtn;
     document.getElementById('btnExport').textContent = t.exportBtn;
@@ -283,6 +291,19 @@
     saveState();
   }
 
+  function deleteRow() {
+    const cell = getActiveTableCell();
+    if (!cell) return alert(i18n[currentLang].alertTable);
+    const row = cell.parentNode;
+    const table = cell.closest('table');
+    if (table.rows.length <= 1) {
+      table.remove();
+    } else {
+      row.remove();
+    }
+    saveState();
+  }
+
   function addCol() {
     const cell = getActiveTableCell();
     if (!cell) return alert(i18n[currentLang].alertTable);
@@ -292,6 +313,21 @@
       const newCell = row.insertCell(colIndex + 1);
       newCell.innerHTML = '<br>';
     });
+    saveState();
+  }
+
+  function deleteCol() {
+    const cell = getActiveTableCell();
+    if (!cell) return alert(i18n[currentLang].alertTable);
+    const colIndex = cell.cellIndex;
+    const table = cell.closest('table');
+    if (table.rows[0].cells.length <= 1) {
+      table.remove();
+    } else {
+      Array.from(table.rows).forEach(row => {
+        if (row.cells[colIndex]) row.deleteCell(colIndex);
+      });
+    }
     saveState();
   }
 
