@@ -229,6 +229,11 @@
 
   editor.addEventListener('input', saveState);
 
+  // Voorkom dat klikken op werkbalkknoppen de cursorfocus uit de tekst of tabelcel steelt
+  document.querySelectorAll('.toolbar button').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.preventDefault());
+  });
+
   window.addEventListener('beforeunload', (e) => {
     if (hasMeaningfulContent()) {
       e.preventDefault();
@@ -285,11 +290,29 @@
     const sel = window.getSelection();
     if (!sel.rangeCount) return null;
     let node = sel.anchorNode;
+
+    // Als Chromium op een <tr> of <table> staat (bijv. in een lege eerste cel), pak het exacte kind-element
+    if (node && node.nodeType === 1 && (node.nodeName === 'TR' || node.nodeName === 'TBODY' || node.nodeName === 'TABLE')) {
+      const child = node.childNodes[sel.anchorOffset] || node.childNodes[Math.max(0, sel.anchorOffset - 1)];
+      if (child) node = child;
+    }
+
     while (node && node !== editor) {
       if (node.nodeName === 'TD' || node.nodeName === 'TH') return node;
       node = node.parentNode;
     }
     return null;
+  }
+
+  function focusCell(cell) {
+    if (!cell) return;
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
   function addRow() {
@@ -299,6 +322,7 @@
     const newRow = row.cloneNode(true);
     Array.from(newRow.cells).forEach(c => c.innerHTML = '<br>');
     row.parentNode.insertBefore(newRow, row.nextSibling);
+    if (newRow.cells[cell.cellIndex]) focusCell(newRow.cells[cell.cellIndex]);
     saveState();
   }
 
@@ -307,10 +331,15 @@
     if (!cell) return alert(i18n[currentLang].alertTable);
     const row = cell.parentNode;
     const table = cell.closest('table');
+    const colIdx = cell.cellIndex;
+
     if (table.rows.length <= 1) {
       table.remove();
+      editor.focus();
     } else {
+      const nextRow = row.nextElementSibling || row.previousElementSibling;
       row.remove();
+      if (nextRow && nextRow.cells[colIdx]) focusCell(nextRow.cells[colIdx]);
     }
     saveState();
   }
@@ -319,11 +348,13 @@
     const cell = getActiveTableCell();
     if (!cell) return alert(i18n[currentLang].alertTable);
     const colIndex = cell.cellIndex;
+    const row = cell.parentNode;
     const table = cell.closest('table');
-    Array.from(table.rows).forEach(row => {
-      const newCell = row.insertCell(colIndex + 1);
+    Array.from(table.rows).forEach(r => {
+      const newCell = r.insertCell(colIndex + 1);
       newCell.innerHTML = '<br>';
     });
+    if (row.cells[colIndex + 1]) focusCell(row.cells[colIndex + 1]);
     saveState();
   }
 
@@ -331,13 +362,18 @@
     const cell = getActiveTableCell();
     if (!cell) return alert(i18n[currentLang].alertTable);
     const colIndex = cell.cellIndex;
+    const row = cell.parentNode;
     const table = cell.closest('table');
+
     if (table.rows[0].cells.length <= 1) {
       table.remove();
+      editor.focus();
     } else {
-      Array.from(table.rows).forEach(row => {
-        if (row.cells[colIndex]) row.deleteCell(colIndex);
+      Array.from(table.rows).forEach(r => {
+        if (r.cells[colIndex]) r.deleteCell(colIndex);
       });
+      const nextCell = row.cells[colIndex] || row.cells[colIndex - 1];
+      if (nextCell) focusCell(nextCell);
     }
     saveState();
   }
